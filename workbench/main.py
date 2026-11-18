@@ -152,6 +152,11 @@ def create_app(data_dir: str | None = None, serverless: bool | None = None, sess
         data = await body(request)
         return wb.create_project(data.get("name", ""), data.get("client", ""), data.get("description", ""))
 
+    @app.post("/api/demo")
+    def demo():
+        """A project filled with the bundled mock data, for showing the application without a tenant."""
+        return wb.load_demo()
+
     @app.get("/api/projects/{pid}")
     def project(pid: str):
         return wb.project(pid)

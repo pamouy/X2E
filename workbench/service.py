@@ -389,6 +389,8 @@ class Workbench:
     def _instance(self, pid: str, cid: str, key: bytes):
         row = self._connector_row(pid, cid)
         cfg = self._connector_cfg(pid, row, key)
+        if cfg.get("demo"):
+            raise ApiError(400, "This connector holds bundled demo data. There is no tenant behind it to test or collect from")
         try:
             return row, MODULES[row["platform"]].Connector(cfg["config"])
         except (ConnectorError, HttpError) as exc:
@@ -717,6 +719,76 @@ class Workbench:
         self.audit(pid, "export", "evidence pack")
         stem = re.sub(r"[^A-Za-z0-9]+", "-", meta["name"]).strip("-").lower()
         return report.evidence_pack(meta, items, audit), f"{stem}-evidence.zip"
+
+    # ---- demo data ------------------------------------------------------------------------------
+    def load_demo(self) -> dict:
+        """Create a project from the bundled snapshots of a mock Okta org and a mock Entra tenant.
+        Nothing is contacted: the data ships with the application and is stored like any other project,
+        encrypted under a new project key."""
+        import zipfile
+        from datetime import date
+        from pathlib import Path
+        bundle = Path(__file__).parent / "demo" / "okta-to-entra.zip"
+        if not bundle.is_file():
+            raise ApiError(404, "The demo data is not part of this installation")
+        proj = self.create_project("Demo: Okta to Entra ID", "Contoso Bank AG (mock data)",
+                                   "Bundled mock tenants. No real system was contacted and no real person appears in this project.")
+        pid = proj["id"]
+        key = self._key(pid)
+        defaults = lambda platform: {f["name"]: f["default"] for f in MODULES[platform].Connector.FIELDS}  # noqa: E731
+        parts = (("entra", "target", "Contoso tenant (mock)", {"tenantId": "contoso-demo", "clientId": "00000000-0000-0000-0000-000000000000"}),
+                 ("okta", "source", "Okta production (mock)", {"orgUrl": "https://contoso-demo.okta.example", "authMode": "ssws"}))
+        source_cid = None
+        with zipfile.ZipFile(bundle) as z:
+            for platform, role, name, cfg in parts:
+                cid, rid = _id(), _id()
+                body = {"name": name, "demo": True, "config": {**defaults(platform), **cfg}}
+                manifest = json.loads(z.read(f"{platform}/manifest.json"))
+                when = manifest["collectedAtUtc"]
+                stmts = [("INSERT INTO connectors(id, project_id, platform, role, created, enc_config) VALUES(?,?,?,?,?,?)",
+                          (cid, pid, platform, role, iso(utcnow()), vault.seal_json(key, body, f"{pid}:connector:{cid}"))),
+                         ("INSERT INTO runs(id, project_id, connector_id, platform, role, status, started, finished, enc_manifest, heartbeat) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                          (rid, pid, cid, platform, role, "done", when, when, vault.seal_json(key, manifest, f"{pid}:manifest:{rid}"), when))]
+                for item in manifest["items"]:
+                    blob = z.read(f"{platform}/items/{item}.json")
+                    stmts.append(("INSERT INTO blobs(run_id, name, project_id, enc_data) VALUES(?,?,?,?)", (rid, item, pid, vault.seal(key, blob, f"{pid}:blob:{rid}:{item}"))))
+                self.store.transaction(stmts)
+                if role == "source":
+                    source_cid = cid
+        self.analyse_connector(pid, source_cid, key)
+        a = self.analysis(pid, source_cid)
+        # a believable state of work: owners named, the first wave closed, some decisions taken
+        owners = ["M. Keller", "S. Yilmaz", "J. Novak", "A. Rossi", "L. Schmidt"]
+        plan = {"1": ["Validated", "Validated", "Validated", "Switched", "Switched"], "2": ["In progress"], "3": ["In progress"], "5": ["Blocked"], "R": ["Retired", "Retired"]}
+        notes = {"Blocked": "Vendor offers no SAML yet: decision pending", "Retired": "Owner confirmed: no users left", "Validated": "Signed off by the owner"}
+        track, seen = {}, {}
+        for i, app in enumerate(a["apps"]):
+            n = seen.get(app["wave"], 0)
+            seen[app["wave"]] = n + 1
+            entry = {}
+            if app["wave"] in ("1", "2", "3"):
+                entry["owner"] = owners[i % len(owners)]
+            status = (plan.get(app["wave"]) or [])[n:n + 1]
+            if status:
+                entry.update(status=status[0], owner=entry.get("owner") or owners[i % len(owners)], note=notes.get(status[0], ""))
+            if entry:
+                track[str(app["appId"])] = entry
+        self._kv_set(pid, f"tracking:{source_cid}", track, key)
+        checks = {}
+        for row in [r for r in a["tables"]["policies"] if r["status"] == "ACTIVE"][:8]:
+            weak = row["authentication"] in ("No MFA", "1FA") and row["access"] != "DENY"
+            checks["policy:" + "|".join((row["policyType"], row["policy"], row["rule"]))] = (
+                {"parity": "Raised", "decision": "Not reproduced: MFA applies to all users (CA-01)"} if weak
+                else {"parity": "Equivalent", "decision": "Covered by the Conditional Access baseline"})
+        for row, answer in zip(a["tables"]["manualChecks"], ("12 flows in 3 folders exported; 4 call external systems", "2 AD agents and 1 RADIUS agent on 3 servers; owners named")):
+            checks["manual:" + row["item"]] = {"done": True, "answer": answer}
+        self._kv_set(pid, f"checks:{source_cid}", checks, key)
+        meta = self._meta(pid, key)
+        meta["gates"]["G1"] = {"status": "Passed", "signedBy": "Sponsor (demo)", "date": date.today().isoformat(), "note": "Full exit from Okta decided"}
+        self._save_meta(pid, meta, key)
+        self.analyse_connector(pid, source_cid, key)
+        self.audit(pid, "demo.loaded", "bundled mock data")
+        return self.project(pid)
 
     def audit_trail(self, pid: str, limit: int = 200) -> list[dict]:
         self._key(pid)

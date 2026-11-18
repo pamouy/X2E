@@ -4,7 +4,7 @@ One application to assess and track migrations to Microsoft Entra ID from **Okta
 It replaces the two PowerShell toolkits (`o2e-toolkit`, `x2e-toolkit`): same collection and analysis logic, now behind a web UI,
 with several client projects side by side.
 
-**Status: 0.2.0, tested against mock tenants only.** Every collector was written from the vendors' API documentation and is exercised
+**Status: 0.2.1, tested against mock tenants only.** Every collector was written from the vendors' API documentation and is exercised
 end to end against mock APIs in `tests/mocks`. None has run against a real tenant yet. Expect to adjust field names and paging details
 on first contact; the collectors record what they could not read instead of failing.
 
@@ -18,6 +18,12 @@ on first contact; the collectors record what they could not read instead of fail
    checklist, identity matching against the target, gallery matching, items to capture by hand.
 6. **Tracking.** Owner, status and wave per application; parity decision per policy rule; answers to manual checks; sign-off of gates G1 to G6.
 7. **Outputs.** Excel workbook, findings report (Markdown), analysis (JSON), and an evidence pack (zip) with manifests and the audit trail.
+
+## Demo project
+
+"Load demo project" on the Projects page creates a complete Okta-to-Entra project from snapshots of the mock Okta org and the mock
+Entra tenant that ship with the application (`workbench/demo`). Nothing is contacted and no real person appears in it. The project is
+stored encrypted like any other, comes with owners, statuses, parity decisions and a signed G1, and can be changed or deleted freely.
 
 ## Run it
 
@@ -107,7 +113,7 @@ python -m pytest tests -q                                             # server m
 WB_TEST_MODE=serverless WB_TEST_DB=postgres python -m pytest tests -q   # as on Vercel; needs a local Postgres (WB_TEST_PG)
 ```
 
-21 tests, about 170 assertions, 40 s per run. All four combinations pass: server or serverless mode, SQLite or Postgres 16.
+22 tests, about 195 assertions, 40 s per run. All four combinations pass: server or serverless mode, SQLite or Postgres 16.
 The suite starts three mock servers (Okta; Keycloak, PingFederate, PingOne and OneLogin; Microsoft Graph) and drives the real application:
 five platforms in four projects, results compared with the mocks' ground truth, no write request sent, nothing readable in the database,
 planted secrets absent from decrypted snapshots, project isolation, tamper detection, tracking, exports, drift, pruning, cancellation,

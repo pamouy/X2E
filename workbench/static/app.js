@@ -159,9 +159,11 @@
     });
     cards.forEach(function (c) { c.querySelector('.chips').style.margin = '10px 0'; });
     return h('div', { class: 'stack' },
-      h('div', { class: 'row' }, h('h1', { class: 'grow' }, 'Projects'), h('button', { class: 'btn primary', onclick: newProject }, 'New project')),
+      h('div', { class: 'row' }, h('h1', { class: 'grow' }, 'Projects'),
+        h('button', { class: 'btn', title: 'Creates a project from bundled mock tenants. Nothing is contacted.', onclick: function (e) { e.target.disabled = true; api('POST', '/api/demo').then(function (p) { toast('Demo project loaded'); S.tab = 'overview'; S.source = null; openProject(p.id); }).catch(function (err) { e.target.disabled = false; fail(err); }); } }, 'Load demo project'),
+        h('button', { class: 'btn primary', onclick: newProject }, 'New project')),
       S.projects.length ? h('div', { class: 'grid' }, cards)
-        : h('div', { class: 'card empty' }, 'No project yet. A project holds the source platforms of one client, its target tenant, snapshots and decisions. Each project is encrypted with its own key.'));
+        : h('div', { class: 'card empty' }, 'No project yet. A project holds the source platforms of one client, its target tenant, snapshots and decisions. Each project is encrypted with its own key. To look around first, load the demo project: it is built from mock tenants that ship with the application.'));
   }
   function labelOf(platform) { var p = S.platforms.filter(function (x) { return x.platform === platform; })[0]; return p ? p.label : platform; }
   function newProject() {

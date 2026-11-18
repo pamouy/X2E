@@ -637,3 +637,37 @@ def test_21_public_deployment_rules(env, monkeypatch):
     not_configured = create_app(str(env["data"]), serverless=True, session_secret=None)
     r = client(not_configured).get("/api/state")
     assert r.status_code == 503 and "WORKBENCH_SESSION_SECRET" in r.json()["error"]
+
+
+def test_22_demo_project(env):
+    """The bundled demo: a full Okta-to-Entra project without any tenant, stored encrypted like every other project."""
+    c = env["c"]
+    p = c.post("/api/demo", headers=H)
+    assert p.status_code == 200, p.text
+    p = p.json()
+    assert p["name"] == "Demo: Okta to Entra ID" and p["gates"]["G1"]["status"] == "Passed"
+    roles = {x["role"]: x for x in p["connectors"]}
+    assert set(roles) == {"source", "target"} and roles["source"]["platform"] == "okta" and roles["source"]["analysedAt"]
+    assert roles["source"]["config"]["apiToken"] == {"set": False}                           # no credential, not even a fake one
+    pid, cid = p["id"], roles["source"]["id"]
+    a = c.get(f"/api/projects/{pid}/analysis/{cid}").json()
+    s = a["summary"]
+    assert (s["platform"], s["apps"], s["state"], s["targetCollected"], s["collectionErrors"]) == ("Okta", 30, "A", True, 0)
+    assert s["blockers"] >= 5 and a["identity"]["matching"]["unmatched"] == 7 and a["target"]["tenant"] == "Contoso (mock tenant)"
+    status = [x["trackStatus"] for x in a["apps"]]
+    assert status.count("Validated") == 3 and status.count("Retired") == 2 and "Blocked" in status and "In progress" in status
+    assert all(x["owner"] for x in a["apps"] if x["wave"] in ("1", "2", "3"))
+    assert next(w for w in a["waves"] if w["wave"] == "1")["done"] == 3
+    assert sum(1 for r in a["tables"]["policies"] if r["parity"]) == 8 and sum(1 for r in a["tables"]["manualChecks"] if r["done"]) == 2
+    assert "127.0.0.1" not in json.dumps(a)
+    runs = c.get(f"/api/projects/{pid}/runs").json()
+    assert len(runs) == 2 and all(r["status"] == "done" and r["manifest"]["source"].startswith("Mock ") for r in runs)
+    for conn in p["connectors"]:                                                             # nothing to collect from, and the app says so
+        r = c.post(f"/api/projects/{pid}/connectors/{conn['id']}/collect", headers=H)
+        assert r.status_code == 400 and "demo data" in r.json()["error"]
+        assert c.post(f"/api/projects/{pid}/connectors/{conn['id']}/test", headers=H).status_code == 400
+    assert c.get(f"/api/projects/{pid}/export/{cid}/xlsx").status_code == 200
+    assert b"Demo: Okta" not in raw_dump(env) and b"user001@example.com" not in raw_dump(env)  # encrypted like any project
+    c.put(f"/api/projects/{pid}/tracking/{cid}", json={"appId": a["apps"][5]["appId"], "status": "Validated"}, headers=H)
+    assert next(w for w in c.get(f"/api/projects/{pid}/analysis/{cid}").json()["waves"] if w["wave"] == "1")["done"] == 4   # the demo is a live project
+    assert c.request("DELETE", f"/api/projects/{pid}", json={"confirm": "Demo: Okta to Entra ID"}, headers=H).status_code == 200
