@@ -1,0 +1,9 @@
+tests
+data
+docs
+Dockerfile
+docker-compose.yml
+.dockerignore
+requirements-dev.txt
+**/__pycache__
+.pytest_cache

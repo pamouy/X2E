@@ -1,0 +1,22 @@
+services:
+  workbench:
+    build: .
+    image: entra-migration-workbench:0.2.0
+    ports:
+      - "127.0.0.1:8080:8080"        # reachable from this machine only; put a TLS reverse proxy in front for a jump host
+    volumes:
+      - workbench-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    # environment:
+    #   WORKBENCH_TLS_CERT: /certs/server.crt      # serve https directly instead of a proxy
+    #   WORKBENCH_TLS_KEY: /certs/server.key
+    #   WORKBENCH_COOKIE_SECURE: "1"               # set when the UI is served over https
+    #   WORKBENCH_WORKERS: "4"                     # collections that run at the same time
+volumes:
+  workbench-data:
